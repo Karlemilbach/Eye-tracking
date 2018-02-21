@@ -1,0 +1,477 @@
+---
+title: "Eye tracking (data cleaning)"
+author: "Karl Emil Hausmann Bach"
+date: "2/5/2018"
+output: pdf_document
+---
+
+packages:
+```{r}
+library(lmerTest)
+library(lme4)
+library(caret)
+library(lattice)
+library(modelr)
+library(Metrics)
+library(groupdata2)
+```
+
+Data:
+```{r}
+setwd("~/Desktop/Eyetracking/2018 - Eye tracking/")
+
+# these are only the fixations 
+fixationsV1 <- read.csv("FixationsV1.csv")
+fixationsV2 <- read.csv("2018 - Eye tracking/FixationsV2.csv")
+fixationsV3 <- read.csv("FixationsV3.csv")
+
+#these are only the saccades  
+saccadesV1 <- read.csv("SaccadesV1.csv")
+saccadesV2 <- read.csv("SaccadesV2.csv")
+saccadesV3 <- read.csv("SaccadesV3.csv")
+
+# these are all the samples (on per millisecond, or more og less depending on the sampling rate)  
+samplesV1 <- read.csv("SamplesV1.csv")
+samplesV2 <- read.csv("SamplesV2.csv")
+samplesV3 <- read.csv("SamplesV3.csv")
+
+# raw data files
+raw_fixations <- read.delim("eyetracking_2018_fixations.txt") 
+raw_saccades <- read.delim("eyetracking_2018_saccades.txt")
+raw_samples <- read.delim("eyetracking_2018_samples.txt")
+
+# log files
+log_pupil_1 <- read.csv("2018 - Eye tracking/PupilsLogs/logfile_1_2_f.csv")
+log_pupil_2 <- read.csv("2018 - Eye tracking/PupilsLogs/logfile_2_1_f.csv")
+log_pupil_3 <- read.csv("2018 - Eye tracking/PupilsLogs/logfile_3_2_f.csv")
+log_pupil_4 <- read.csv("2018 - Eye tracking/PupilsLogs/logfile_4_1_F.csv")
+log_pupil_5 <- read.csv("2018 - Eye tracking/PupilsLogs/logfile_5_2_m.csv")
+log_pupil_6 <- read.csv("2018 - Eye tracking/PupilsLogs/logfile_6_1_m.csv")
+
+```
+
+Cleaning the data. similar to what riccardo did between steps 'V1' and 'V2'...
+```{r}
+# merge log-files
+test <-  rbind(log_pupil_1, log_pupil_2)
+test <-  rbind(test, log_pupil_3)
+test <-  rbind(test, log_pupil_4)
+test <-  rbind(test, log_pupil_5)
+log_all <-  rbind(test, log_pupil_6)
+
+# change the name of the column of subject so that it fits with the other data frames
+data.table::setnames(log_all, "subject", "ParticipantID")
+
+# add 1 to eeach row of variable X
+log_all$X <- log_all[,1] + 1
+
+# change "X" to "Trial"
+data.table::setnames(log_all, "X", "Trial")
+
+
+# extract information from the video name!
+#log_all$directionality <- substr(log_all$video, 9, 11)
+#log_all$ostensiveness <- substr(log_all$video, 13, 13)
+
+# or do like this
+log_all$directionality[grepl("dir", log_all$video)]="towardYou"
+log_all$directionality[grepl("div", log_all$video)]="toward3rd"
+
+log_all$ostensiveness[grepl("+", log_all$video)]="ostensive"
+log_all$ostensiveness[grepl("-", log_all$video)]="non-ostensive"
+
+
+# merge data with other data frames
+fixations_merged <- merge(fixationsV1, log_all, by = c("ParticipantID", "Trial"), all = T)
+saccades_merged <- merge(fixationsV1, log_all, by = c("ParticipantID", "Trial"), all = T)
+samples_merged <- merge(fixationsV1, log_all, by = c("ParticipantID", "Trial"), all = T)
+
+# splitting the different visual search task into different search types ()
+fixations_merged$searchType[fixations_merged$SearchOrder == 1 & fixations_merged$Trial <6] = "star"
+fixations_merged$searchType[fixations_merged$SearchOrder == 1 & fixations_merged$Trial >5] = "count"
+fixations_merged$searchType[fixations_merged$SearchOrder == 2 & fixations_merged$Trial <6] = "count"
+fixations_merged$searchType[fixations_merged$SearchOrder == 2 & fixations_merged$Trial >5] = "star"
+
+# and for saccades
+saccades_merged$searchType[saccades_merged$SearchOrder == 1 & saccades_merged$Trial <6] = "star"
+saccades_merged$searchType[saccades_merged$SearchOrder == 1 & saccades_merged$Trial >5] = "count"
+saccades_merged$searchType[saccades_merged$SearchOrder == 2 & saccades_merged$Trial <6] = "count"
+saccades_merged$searchType[saccades_merged$SearchOrder == 2 & saccades_merged$Trial >5] = "star"
+
+# and for all sampling data
+
+```
+
+```{r}
+library(ggplot2)
+
+#check for a normal distribution
+ggplot(fixationsV2, aes(Duration)) + 
+  geom_histogram() + 
+  facet_wrap(~Task)
+
+ggplot(samplesV2, aes(PupilSize)) + 
+  geom_histogram() + 
+  facet_wrap(~Task)
+
+# or density plots
+ggplot(fixationsV2, aes(Duration)) + 
+  geom_density() + 
+  facet_wrap(~Task)
+
+ggplot(samplesV2, aes(PupilSize)) + 
+  geom_density() + 
+  facet_wrap(~Task)
+
+
+
+
+
+Heat maps
+
+
+jet.colors <- colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000"))
+
+                                 
+library(jpeg);library(grid)
+img <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng090ws.jpg")
+g <- rasterGrob(img, interpolate = T)
+
+ggplot(subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='6_3_m2' & Trial==6), aes(x = PositionX, y = PositionY)) +
+xlim(0,1920) +
+ylim(0, 1080) + annotation_custom(g, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) + #xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+stat_density2d(geom="raster", aes(fill=..density.., alpha=sqrt(sqrt(..density..))), contour=FALSE, n=1000) + 
+scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = jet.colors(10), trans="sqrt")
+
+
+
+
+
+
+
+
+
+
+
+img2 <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng064ws.jpg")
+g2 <- rasterGrob(img2, interpolate = T)
+
+ggplot(subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='4_2_F1' & Trial==4), aes(x = PositionX, y = PositionY)) +
+xlim(0,1920) + ylim(0, 1080) + annotation_custom(g2, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
+stat_density2d(geom="raster", aes(fill=..density.., alpha=sqrt(sqrt(..density..))), contour=FALSE, n=1000) + 
+scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = jet.colors(10), trans="sqrt")
+
+
+
+
+
+
+
+
+
+
+
+img3 <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng090ws.jpg")
+g3 <- rasterGrob(img3, interpolate = T)
+
+
+ggplot(subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='4_2_F1' & Trial==6), aes(x = PositionX, y = PositionY)) +
+xlim(0,1920) + ylim(0, 1080) + annotation_custom(g3, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
+stat_density2d(geom="raster", aes(fill=..density.., alpha=sqrt(sqrt(..density..))), contour=FALSE, n=1000) + 
+scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = jet.colors(10), trans="sqrt")
+
+
+
+
+
+
+
+
+
+
+img4 <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng120ws.jpg")
+g4 <- rasterGrob(img4, interpolate = T)
+
+ggplot(subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='5_1_m2' & Trial==7), aes(x = PositionX, y = PositionY)) +
+xlim(0,1920) + ylim(0, 1080) + annotation_custom(g4, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) +
+stat_density2d(geom="raster", aes(fill=..density.., alpha=sqrt(sqrt(..density..))), contour=FALSE, n=1000) + 
+scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = jet.colors(10), trans="sqrt")
+
+
+
+
+
+
+
+
+# scan paths
+
+img4 <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng120ws.jpg")
+g4 <- rasterGrob(img4, interpolate = T)
+
+
+sub = subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='5_1_m2' & Trial==7)
+sub = sub[order(sub$Fixation),]
+ggplot(sub, aes(x = PositionX, y = 1081 - PositionY, label = Fixation)) + 
+  xlim(0, 1920) + 
+  ylim(0, 1080) +
+  annotation_custom(g4, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) + 
+  geom_point(size = sub$Duration/50, alpha = 0.4, color = "magenta") +
+  geom_path(size = 1, alpha = 0.4, color = "magenta") + 
+  geom_text(aes(label = Fixation, size = 5)) 
+
+
+
+
+
+
+img3 <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng090ws.jpg")
+g3 <- rasterGrob(img3, interpolate = T)
+
+sub = subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='4_2_F1' & Trial==6)
+sub = sub[order(sub$Fixation),]
+ggplot(sub, aes(x = PositionX, y = 1081 - PositionY, label = Fixation)) + 
+  xlim(0, 1920) + 
+  ylim(0, 1080) + 
+  annotation_custom(g3, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) + 
+  geom_point(size = 5, alpha = 0.4, color = "magenta") +
+  geom_path(size = 1, alpha = 0.4, color = "magenta") + 
+  geom_text(aes(label = Fixation, size = 5)) 
+
+
+
+
+
+
+
+
+
+
+
+img5 <- readJPEG("2018 - Eye tracking/eyetrackingscripts/foraging/ng021ws.jpg")
+g5 <- rasterGrob(img5, interpolate = T)
+
+
+sub = subset(fixationsV2, Task=='VisualSearch' & ParticipantID=='2_2_f2' & Trial==1)
+sub = sub[order(sub$Fixation),]
+ggplot(sub, aes(x = PositionX, y = 1081 - PositionY, label = Fixation)) + 
+  xlim(0, 1920) + 
+  ylim(0, 1080) + 
+  annotation_custom(g5, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) + 
+  geom_point(size = 5, alpha = 0.4, color = "magenta") +
+  geom_path(size = 1, alpha = 0.4, color = "magenta") + 
+  geom_text(aes(label = Fixation, size = 5)) 
+
+
+
+
+
+
+
+# other plot
+sub = subset(samplesV2, Task == "SocialEngagement")
+ggplot(sub, aes(x = TrialTime, y = PupilSize)) + geom_smooth(aes(color = Ostension)) + facet_wrap(~Directionality)
+
+
+```
+
+Models to investigate the visual search paradigm:
+```{r}
+# lmer models
+model_test <- lmer(Duration~searchType*SearchOrder*Fixation*Trial+(1+searchType*Fixation*Trial|ParticipantID), data = fixations_merged)
+# 'Trial' is put in as a fixed effect, as this takes into account boredom or betting better over time
+# i terms of random effects, 1+searchType*Fixation*Trial are the slope and ParticipantID is the random intercept
+# this model might be too complex. We should think of "when do we stop? when is the model getting too complicated?"
+
+
+# we can try to make a new model. 
+model_test <- lmer(Duration~searchType*Trial+(1+searchType*Trial|ParticipantID), data = fixations_merged)
+# here we have left out some of the fixed effects to get a more feasible model, that is not too complicated
+
+
+
+
+
+
+
+# because the fixationdurations are not normally distibuted, we should make a 'log-transformation'. this we do by adding family = Gaussian(link = log) to the model. 
+
+
+
+
+
+```
+
+cross-validate three different models to test which is the best fit to the data on visual search
+```{r}
+# we can start out with 3 models
+model1 <- glmer(Duration~SearchType*Trial+(1+SearchType*Trial|ParticipantID), data = fixationsV2, family = gaussian(link = log))
+model2 <- glmer(Duration~SearchType+Trial+(1+SearchType*Trial|ParticipantID), data = fixationsV2, family = gaussian(link = log))
+model3 <- glmer(Duration~SearchType+(1+SearchType|ParticipantID), data = fixationsV2, family = gaussian(link = log))
+
+
+
+#folds = createFolds(as.numeric(factor(fixationsV2$ParticipantID)),k=3)
+fixationsV2$uniqueSubject <- as.numeric(fixationsV2$ParticipantID)
+
+fixationsV2 <- fold(fixationsV2, k = 3, id_col = "uniqueSubject")
+
+colnames(fixationsV2)[19]="folds"
+
+numfolds = 3
+
+#visual search subset
+fixationsV2_VS <- fixationsV2[fixationsV2$Task == "VisualSearch",]
+
+#Social engagement subset
+fixationsV2_SE <- fixationsV2[fixationsV2$Task == "SocialEngagement",]
+
+#fixationsV2_VS$subject <- as.numeric(factor(fixationsV2_VS$ParticipantID))
+#folds <- createFolds(fixationsV2_VS$subject, k = 3)
+
+
+
+
+
+#model1
+
+
+#k??r herfra altid for at t??mme listerne og gendanne n = 1
+error.train.model1=NULL
+error.test.model1=NULL
+n=1
+for (i in seq(numfolds))
+  {
+  testD=fixationsV2_VS[fixationsV2_VS$folds %in% i,]
+  trainD=fixationsV2_VS[!(fixationsV2_VS$folds %in% i),]
+  Mtrain = glmer(Duration~SearchType*Trial+(1+SearchType*Trial|ParticipantID), data = trainD, family = gaussian(link = log))
+  #pred = predict(Mtrain,testD, allow.new.levels=TRUE)
+  error.train.model1[n]= Metrics::rmse(predict(Mtrain),trainD$Duration)
+  error.test.model1[n]= Metrics::rmse(predict(Mtrain),testD$Duration)
+  
+  #error.trains = c(error.trains,error.train[n])
+  #error.tests = c(error.tests, error.test[n])
+
+  n=n+1
+  
+}
+mean(error.train.model1)
+mean(error.test.model1)
+
+
+
+
+
+
+
+
+
+
+
+
+#model2 
+
+error.train.model2=NULL
+error.test.model2=NULL
+n=1
+for (i in seq(numfolds))
+  {
+  testD=fixationsV2_VS[fixationsV2_VS$folds %in% i,]
+  trainD=fixationsV2_VS[!(fixationsV2_VS$folds %in% i),]
+  Mtrain = glmer(Duration~SearchType+Trial+(1+SearchType*Trial|ParticipantID), data = trainD, family = gaussian(link = log))
+  #pred = predict(Mtrain,testD, allow.new.levels=TRUE)
+  error.train.model2[n]= Metrics::rmse(predict(Mtrain),trainD$Duration)
+  error.test.model2[n]= Metrics::rmse(predict(Mtrain),testD$Duration)
+  
+  #error.trains = c(error.trains,error.train[n])
+  #error.tests = c(error.tests, error.test[n])
+
+  n=n+1
+  
+}
+mean(error.train.model2)
+mean(error.test.model2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# model3
+
+error.train.model3=NULL
+error.test.model3=NULL
+n=1
+for (i in seq(numfolds))
+  {
+  testD=fixationsV2_VS[fixationsV2_VS$folds %in% i,]
+  trainD=fixationsV2_VS[!(fixationsV2_VS$folds %in% i),]
+  Mtrain = glmer(Duration~SearchType+(1+SearchType|ParticipantID), data = trainD, family = gaussian(link = log))
+  #pred = predict(Mtrain,testD, allow.new.levels=TRUE)
+  error.train.model3[n]= Metrics::rmse(predict(Mtrain),trainD$Duration)
+  error.test.model3[n]= Metrics::rmse(predict(Mtrain),testD$Duration)
+  
+  #error.trains = c(error.trains,error.train[n])
+  #error.tests = c(error.tests, error.test[n])
+
+  n=n+1
+  
+}
+mean(error.train.model3)
+mean(error.test.model3)
+
+
+
+
+
+
+```
+
+
+
+Models to investigate the social engagement paradigm:
+```{r}
+#model
+lmer(PupilSize~Ostensiveness*Direction+Actorsgender*ParticipantGender+Trial+TrialTime + (1+Trial|ParticipantID))
+
+#written again
+lmer(PupilSize~Direction * Ostensiveness*(TrialTime + TrialTime^2 + TrialTime^3), data = ...,)
+
+
+```
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
